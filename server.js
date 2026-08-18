@@ -3,7 +3,6 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
-const { DatabaseSync } = require('node:sqlite');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,7 +13,19 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-const db = new DatabaseSync(path.join(__dirname, 'data.db'));
+// Universal SQLite database connection (supports Node 18, 20, 22, 24+)
+let db;
+try {
+  const Database = require('better-sqlite3');
+  db = new Database(path.join(__dirname, 'data.db'));
+} catch (e1) {
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    db = new DatabaseSync(path.join(__dirname, 'data.db'));
+  } catch (e2) {
+    console.error('Ошибка подключения к SQLite базе данных:', e2);
+  }
+}
 
 // Initialize database
 db.exec(`
@@ -101,7 +112,15 @@ app.use(session({
   cookie: { httpOnly: true, maxAge: 7 * 24 * 3600 * 1000 }
 }));
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+
+// Explicit clean page routing
+app.get(['/', '/index'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get(['/chat', '/chat.html'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'chat.html')));
+app.get(['/admin', '/admin.html'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get(['/price', '/price.html'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'price.html')));
+app.get(['/reviews', '/reviews.html'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'reviews.html')));
+app.get(['/faq', '/faq.html'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'faq.html')));
 
 const requireAuth = (req, res, next) => {
   if (!req.session.user) return res.status(401).json({ error: 'Войдите в аккаунт' });
