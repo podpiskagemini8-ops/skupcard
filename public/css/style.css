@@ -852,7 +852,12 @@ h2 em, h1 em { font-style: normal; }
   .chat-body { padding: 16px 14px; gap: 10px; }
   .msg { max-width: 88%; }
   .msg .bubble { font-size: 14px; padding: 10px 14px; border-radius: 14px; }
-  .chat-input-row { padding: 10px 12px; gap: 8px; }
+  .chat-input-row { padding: 8px 10px; gap: 6px; }
+  .chat-input-row input { font-size: 15px; padding: 10px 12px; min-width: 0; flex: 1; }
+  .ac-action-btn { width: 38px; height: 38px; border-radius: 10px; }
+  .ac-action-btn svg { width: 18px; height: 18px; }
+  .send-btn, .ac-send-btn { width: 38px; height: 38px; border-radius: 10px; flex: none; }
+  .send-btn svg, .ac-send-btn svg { width: 18px; height: 18px; }
   /* Admin Panel Mobile */
   .admin-page { height: 100vh; height: 100dvh; }
   .admin-layout {
