@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Чат со скупщиком | Romeo Skup</title>
+<meta name="description" content="Чат со скупщиком Пушкинских карт. Онлайн 24/7, ответ за минуту.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2308070c'/%3E%3Ctext x='32' y='45' font-size='34' text-anchor='middle' fill='%23b8ff2f' font-family='Arial Black,sans-serif' font-weight='900'%3ER%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<script src="/js/theme.js"></script>
+</head>
+<body class="chat-page">
+
+<div class="noise" aria-hidden="true"></div>
+<div class="bg-grid" aria-hidden="true"></div>
+<div class="orb orb-pink" aria-hidden="true"></div>
+<div class="orb orb-green" aria-hidden="true"></div>
+
+<header class="nav" id="navbar">
+  <div class="nav-inner">
+    <a href="/" class="logo">
+      <span class="logo-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>
+      </span>
+      <span class="logo-text">ROMEO<small>SKUP</small></span>
+    </a>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="theme-picker" id="themePicker">
+        <button type="button" class="theme-btn" id="themeBtn" title="Сменить тему оформления" aria-label="Сменить тему">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        </button>
+        <div class="theme-menu">
+          <div class="theme-menu-title">Тема оформления</div>
+          <button type="button" class="theme-opt" data-theme="cyberpunk">
+            <span class="theme-swatch sw-cyberpunk"></span>
+            <span>Неон</span>
+          </button>
+          <button type="button" class="theme-opt" data-theme="dark">
+            <span class="theme-swatch sw-dark"></span>
+            <span>Тёмная</span>
+          </button>
+          <button type="button" class="theme-opt" data-theme="midnight">
+            <span class="theme-swatch sw-midnight"></span>
+            <span>Полночь</span>
+          </button>
+          <button type="button" class="theme-opt" data-theme="emerald">
+            <span class="theme-swatch sw-emerald"></span>
+            <span>Изумруд</span>
+          </button>
+          <button type="button" class="theme-opt" data-theme="sunset">
+            <span class="theme-swatch sw-sunset"></span>
+            <span>Закат</span>
+          </button>
+          <button type="button" class="theme-opt" data-theme="oled">
+            <span class="theme-swatch sw-oled"></span>
+            <span>Глубокий OLED</span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-auth">
+        <a href="/" class="btn btn-ghost btn-sm">На главную</a>
+        <button class="btn btn-ghost btn-sm" id="logoutBtn">Выйти</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="chat-layout container">
+  <aside class="buyer-card reveal">
+    <div class="bc-avatar-wrap">
+      <div class="bc-avatar">Р</div>
+      <span class="bc-online"><i></i>онлайн</span>
+    </div>
+    <h2>Ромео</h2>
+    <p class="bc-role">скупщик пушкинских баллов</p>
+    <div class="bc-stats">
+      <div><strong>1 240+</strong><span>сделок</span></div>
+      <div><strong>4.9 ★</strong><span>рейтинг</span></div>
+      <div><strong>~1 мин</strong><span>ответ</span></div>
+    </div>
+    <div class="bc-steps">
+      <h3>Как пройдёт сделка</h3>
+      <ol>
+        <li>Пришли реквизиты карты и баланс</li>
+        <li>Ромео спишет пушкинские баллы</li>
+        <li>Получи 10% на карту или СБП</li>
+      </ol>
+    </div>
+  </aside>
+
+  <section class="chat-window reveal d1">
+    <div class="chat-head">
+      <div class="ch-avatar">Р</div>
+      <div class="ch-info">
+        <strong>Ромео</strong>
+        <span class="cp-online"><i></i>в сети · отвечает мгновенно</span>
+      </div>
+      <span class="ch-secure">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.6 3 8.4 7 10 4-1.6 7-5.4 7-10V6l-7-3Z"/><path d="m9.5 12 1.8 1.8L15 10"/></svg>
+        сделка защищена
+      </span>
+    </div>
+
+    <div class="chat-body" id="chatBody">
+      <div class="chat-date" id="chatDate"></div>
+    </div>
+
+    <!-- MEDIA PREVIEW BAR (IF ATTACHED) -->
+    <div class="media-preview-bar" id="mediaPreviewBar" style="display:none;">
+      <div class="mp-content" id="mediaPreviewContent"></div>
+      <button type="button" class="mp-remove-btn" id="removeMediaBtn" aria-label="Удалить прикрепление">✕</button>
+    </div>
+
+    <!-- VOICE RECORDING BAR -->
+    <div class="voice-recording-bar" id="voiceRecordingBar" style="display:none;">
+      <div class="v-rec-pulse"></div>
+      <span class="v-rec-label">Запись голосового...</span>
+      <span class="v-rec-timer" id="voiceTimer">0:00</span>
+      <button type="button" class="v-btn v-cancel" id="cancelVoiceBtn">Отмена</button>
+      <button type="button" class="v-btn v-send" id="sendVoiceBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+        Отправить
+      </button>
+    </div>
+
+    <!-- INPUT ROW -->
+    <div class="chat-input-row" id="chatInputRow">
+      <input type="file" id="photoInput" accept="image/*" style="display:none;">
+      
+      <button type="button" class="ac-action-btn" id="attachPhotoBtn" title="Прикрепить фото / скриншот">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+      </button>
+
+      <button type="button" class="ac-action-btn" id="recordVoiceBtn" title="Записать голосовое сообщение">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+      </button>
+
+      <input type="text" id="chatInput" placeholder="Напиши сообщение или прикрепи фото..." maxlength="1000" autocomplete="off">
+
+      <button class="ac-send-btn" id="sendBtn" title="Отправить сообщение" aria-label="Отправить">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+      </button>
+    </div>
+  </section>
+</main>
+
+<!-- LIGHTBOX -->
+<div class="lightbox" id="lightbox" aria-hidden="true">
+  <div class="lightbox-backdrop" id="lightboxBackdrop"></div>
+  <div class="lightbox-inner">
+    <button class="lightbox-close" id="lightboxClose" aria-label="Закрыть">✕</button>
+    <img src="" id="lightboxImg" alt="Просмотр фото">
+  </div>
+</div>
+
+<script src="/js/chat.js"></script>
+</body>
+</html>
