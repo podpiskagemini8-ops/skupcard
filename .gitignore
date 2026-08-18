@@ -1,5 +1,6 @@
 node_modules/
 data.db
+.encryption_key
 .env
 .DS_Store
 *.log

@@ -8,15 +8,24 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ============ SECURITY HEADERS ============
+// ============ SECURITY HEADERS & IP PROTECTION ============
 app.use((req, res, next) => {
+  // Security headers
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), geolocation=()');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(self)');
+  // Block WebRTC IP leaks + inline scripts XSS
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'");
+  // Remove server fingerprints
+  res.removeHeader('X-Powered-By');
+  // Strip IP-revealing headers from responses
+  res.removeHeader('X-Forwarded-For');
+  res.removeHeader('X-Real-IP');
   next();
 });
+app.disable('x-powered-by');
 
 // ============ RATE LIMITING ============
 const rateLimitMap = new Map();
@@ -100,6 +109,61 @@ db.exec(`
 try { db.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'text';"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN media_url TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN duration INTEGER;"); } catch (e) {}
+
+// ============ AES-256-GCM MESSAGE ENCRYPTION ============
+// Key is derived from env or auto-generated and persisted to a local key file
+const KEY_FILE = path.join(__dirname, '.encryption_key');
+function getEncryptionKey() {
+  // Priority 1: environment variable
+  if (process.env.ENCRYPTION_KEY) {
+    const buf = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+    if (buf.length === 32) return buf;
+  }
+  // Priority 2: persisted key file
+  if (fs.existsSync(KEY_FILE)) {
+    const buf = Buffer.from(fs.readFileSync(KEY_FILE, 'utf8').trim(), 'hex');
+    if (buf.length === 32) return buf;
+  }
+  // Priority 3: generate new key and persist
+  const newKey = crypto.randomBytes(32);
+  fs.writeFileSync(KEY_FILE, newKey.toString('hex'), { mode: 0o600 });
+  return newKey;
+}
+const ENC_KEY = getEncryptionKey();
+
+function encrypt(plaintext) {
+  if (!plaintext) return plaintext;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', ENC_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Format: base64(iv + tag + ciphertext)
+  return 'ENC:' + Buffer.concat([iv, tag, encrypted]).toString('base64');
+}
+
+function decrypt(ciphertext) {
+  if (!ciphertext) return ciphertext;
+  if (!String(ciphertext).startsWith('ENC:')) return ciphertext; // unencrypted legacy data
+  try {
+    const raw = Buffer.from(ciphertext.slice(4), 'base64');
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(12, 28);
+    const data = raw.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', ENC_KEY, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(data, undefined, 'utf8') + decipher.final('utf8');
+  } catch (e) {
+    return '[ошибка расшифровки]';
+  }
+}
+
+function decryptMessage(msg) {
+  if (!msg) return msg;
+  return { ...msg, text: decrypt(msg.text), media_url: decrypt(msg.media_url) };
+}
+function decryptMessages(msgs) {
+  return (msgs || []).map(decryptMessage);
+}
 
 // Admin credentials (use environment variables in production)
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'romeo_skup_admin_2026';
@@ -204,7 +268,7 @@ app.post('/api/register', rateLimit(10, 60000), (req, res) => {
 
   db.prepare('INSERT INTO messages (user_id, sender, text, type) VALUES (?, ?, ?, ?)').run(
     id, 'buyer',
-    `Здравствуйте, ${cleanName}! Я ${BUYER_NAME} — скупщик Пушкинских карт. 😊 Напишите, сколько остатков на вашей карте, — сразу посчитаю сумму, которую заплатим. Можете также отправить скриншот баланса или голосовое сообщение.`,
+    encrypt(`Здравствуйте, ${cleanName}! Я ${BUYER_NAME} — скупщик Пушкинских карт. 😊 Напишите, сколько остатков на вашей карте, — сразу посчитаю сумму, которую заплатим. Можете также отправить скриншот баланса или голосовое сообщение.`),
     'text'
   );
 
@@ -310,7 +374,7 @@ app.post('/api/reviews', requireAuth, (req, res) => {
 app.get('/api/messages', requireAuth, (req, res) => {
   const messages = db.prepare('SELECT * FROM messages WHERE user_id = ? ORDER BY id ASC')
     .all(req.session.user.id);
-  res.json({ messages, buyer: { name: BUYER_NAME } });
+  res.json({ messages: decryptMessages(messages), buyer: { name: BUYER_NAME } });
 });
 
 const ALLOWED_MSG_TYPES = ['text', 'image', 'voice'];
@@ -331,9 +395,9 @@ app.post('/api/messages', requireAuth, rateLimit(40, 60000), (req, res) => {
   const cleanText = String(text || '').trim().slice(0, 1000);
   const safeDuration = (duration && Number.isFinite(Number(duration))) ? Math.min(Math.round(Number(duration)), 600) : null;
   const info = db.prepare('INSERT INTO messages (user_id, sender, text, type, media_url, duration) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(req.session.user.id, 'user', cleanText, safeType, safeMediaUrl, safeDuration);
+    .run(req.session.user.id, 'user', encrypt(cleanText), safeType, encrypt(safeMediaUrl), safeDuration);
   const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(info.lastInsertRowid));
-  res.json({ message });
+  res.json({ message: decryptMessage(message) });
 });
 
 /* ============ ADMIN CHATS APIS ============ */
@@ -349,7 +413,9 @@ app.get('/api/admin/chats', requireAdmin, (req, res) => {
     WHERE u.role != 'admin'
     ORDER BY COALESCE(last_message_time, u.created_at) DESC
   `).all();
-  res.json({ chats });
+  // Decrypt last_message for sidebar preview
+  const decryptedChats = chats.map(c => ({ ...c, last_message: decrypt(c.last_message) }));
+  res.json({ chats: decryptedChats });
 });
 
 app.get('/api/admin/chats/:userId/messages', requireAdmin, (req, res) => {
@@ -357,7 +423,7 @@ app.get('/api/admin/chats/:userId/messages', requireAdmin, (req, res) => {
   const clientUser = db.prepare('SELECT id, name, login, role, created_at FROM users WHERE id = ?').get(userId);
   if (!clientUser) return res.status(404).json({ error: 'Клиент не найден' });
   const messages = db.prepare('SELECT * FROM messages WHERE user_id = ? ORDER BY id ASC').all(userId);
-  res.json({ user: clientUser, messages });
+  res.json({ user: clientUser, messages: decryptMessages(messages) });
 });
 
 app.post('/api/admin/chats/:userId/messages', requireAdmin, (req, res) => {
@@ -375,9 +441,9 @@ app.post('/api/admin/chats/:userId/messages', requireAdmin, (req, res) => {
   const cleanText = String(text || '').trim().slice(0, 1000);
   const safeDuration = (duration && Number.isFinite(Number(duration))) ? Math.min(Math.round(Number(duration)), 600) : null;
   const info = db.prepare('INSERT INTO messages (user_id, sender, text, type, media_url, duration) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(userId, 'buyer', cleanText, safeType, safeMediaUrl, safeDuration);
+    .run(userId, 'buyer', encrypt(cleanText), safeType, encrypt(safeMediaUrl), safeDuration);
   const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(info.lastInsertRowid));
-  res.json({ message });
+  res.json({ message: decryptMessage(message) });
 });
 
 app.listen(PORT, () => {
