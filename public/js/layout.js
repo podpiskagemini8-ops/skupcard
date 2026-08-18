@@ -61,12 +61,17 @@
     <header class="nav" id="navbar">
       <div class="nav-inner">
         ${logo}
-        <nav class="nav-links" id="navLinks">${navLinks}</nav>
-        <div style="display:flex;align-items:center;gap:10px;">
+        <nav class="nav-links" id="navLinks">
+          ${navLinks}
+          <div class="mobile-nav-auth" id="mobileNavAuth">
+            <button type="button" class="btn btn-primary js-register" style="width:100%;margin-top:14px;padding:14px;border-radius:12px;font-size:15px;">Зарегистрироваться</button>
+          </div>
+        </nav>
+        <div class="nav-right-wrap">
           ${themePickerHtml}
           <div class="nav-auth" id="navAuth"></div>
+          <button class="burger" id="burger" aria-label="Меню"><span></span><span></span><span></span></button>
         </div>
-        <button class="burger" id="burger" aria-label="Меню"><span></span><span></span><span></span></button>
       </div>
     </header>`);
 
