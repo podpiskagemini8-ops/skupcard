@@ -1,11 +1,48 @@
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ============ SECURITY HEADERS ============
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=()');
+  next();
+});
+
+// ============ RATE LIMITING ============
+const rateLimitMap = new Map();
+function rateLimit(maxRequests, windowMs) {
+  return (req, res, next) => {
+    const key = req.ip + req.path;
+    const now = Date.now();
+    const entry = rateLimitMap.get(key);
+    if (!entry || now - entry.start > windowMs) {
+      rateLimitMap.set(key, { start: now, count: 1 });
+      return next();
+    }
+    entry.count++;
+    if (entry.count > maxRequests) {
+      return res.status(429).json({ error: 'Слишком много запросов. Подождите немного.' });
+    }
+    next();
+  };
+}
+// Clean up expired entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap) {
+    if (now - entry.start > 120000) rateLimitMap.delete(key);
+  }
+}, 300000);
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'public', 'uploads');
@@ -64,10 +101,10 @@ try { db.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'text'
 try { db.exec("ALTER TABLE messages ADD COLUMN media_url TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN duration INTEGER;"); } catch (e) {}
 
-// Admin credentials
-const ADMIN_LOGIN = 'romeo_skup_admin_2026';
-const ADMIN_PASS = 'R0m3o#Skup$2026!MasterKey9x';
-const ADMIN_NAME = 'Ромео (Администратор)';
+// Admin credentials (use environment variables in production)
+const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'romeo_skup_admin_2026';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'R0m3o#Skup$2026!MasterKey9x';
+const ADMIN_NAME = process.env.ADMIN_NAME || 'Ромео (Администратор)';
 const BUYER_NAME = 'Ромео';
 
 const adminUser = db.prepare('SELECT * FROM users WHERE login = ?').get(ADMIN_LOGIN);
@@ -102,15 +139,24 @@ if (reviewCount === 0) {
   });
 }
 
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Secure session with random secret fallback
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString('hex');
 app.use(session({
-  secret: 'romeo-skup-secret-key-2026',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, maxAge: 7 * 24 * 3600 * 1000 }
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 7 * 24 * 3600 * 1000
+  }
 }));
+
+app.set('trust proxy', 1);
 
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -140,39 +186,45 @@ app.get('/api/me', (req, res) => {
   res.json({ user: req.session.user });
 });
 
-app.post('/api/register', (req, res) => {
+app.post('/api/register', rateLimit(10, 60000), (req, res) => {
   const { name, login, password } = req.body || {};
   if (!name || !login || !password) return res.status(400).json({ error: 'Заполните все поля' });
-  if (name.trim().length < 2) return res.status(400).json({ error: 'Имя слишком короткое' });
-  if (login.trim().length < 3) return res.status(400).json({ error: 'Логин должен быть не короче 3 символов' });
-  if (password.length < 4) return res.status(400).json({ error: 'Пароль должен быть не короче 4 символов' });
-  const exists = db.prepare('SELECT 1 FROM users WHERE login = ?').get(login.trim());
+  const cleanName = String(name).trim().slice(0, 50);
+  const cleanLogin = String(login).trim().slice(0, 30).replace(/[^a-zA-Z0-9_а-яА-ЯёЁ]/g, '');
+  if (cleanName.length < 2) return res.status(400).json({ error: 'Имя слишком короткое' });
+  if (cleanLogin.length < 3) return res.status(400).json({ error: 'Логин должен быть не короче 3 символов' });
+  if (String(password).length < 4 || String(password).length > 128) return res.status(400).json({ error: 'Пароль должен быть от 4 до 128 символов' });
+  const exists = db.prepare('SELECT 1 FROM users WHERE login = ?').get(cleanLogin);
   if (exists) return res.status(409).json({ error: 'Этот логин уже занят' });
 
-  const hash = bcrypt.hashSync(password, 10);
+  const hash = bcrypt.hashSync(String(password), 12);
   const info = db.prepare('INSERT INTO users (name, login, password) VALUES (?, ?, ?)')
-    .run(name.trim(), login.trim(), hash);
+    .run(cleanName, cleanLogin, hash);
   const id = Number(info.lastInsertRowid);
 
   db.prepare('INSERT INTO messages (user_id, sender, text, type) VALUES (?, ?, ?, ?)').run(
     id, 'buyer',
-    `Здравствуйте, ${name.trim()}! Я ${BUYER_NAME} — скупщик Пушкинских карт. 😊 Напишите, сколько остатков на вашей карте, — сразу посчитаю сумму, которую заплатим. Можете также отправить скриншот баланса или голосовое сообщение.`,
+    `Здравствуйте, ${cleanName}! Я ${BUYER_NAME} — скупщик Пушкинских карт. 😊 Напишите, сколько остатков на вашей карте, — сразу посчитаю сумму, которую заплатим. Можете также отправить скриншот баланса или голосовое сообщение.`,
     'text'
   );
 
-  req.session.user = { id, name: name.trim(), login: login.trim(), role: 'user' };
+  req.session.user = { id, name: cleanName, login: cleanLogin, role: 'user' };
   res.json({ user: req.session.user });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', rateLimit(15, 60000), (req, res) => {
   const { login, password } = req.body || {};
   if (!login || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
-  const user = db.prepare('SELECT * FROM users WHERE login = ?').get(login.trim());
-  if (!user || !bcrypt.compareSync(password, user.password)) {
+  const cleanLogin = String(login).trim().slice(0, 30);
+  const user = db.prepare('SELECT * FROM users WHERE login = ?').get(cleanLogin);
+  if (!user || !bcrypt.compareSync(String(password), user.password)) {
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
-  req.session.user = { id: user.id, name: user.name, login: user.login, role: user.role };
-  res.json({ user: req.session.user });
+  // Regenerate session to prevent fixation
+  req.session.regenerate(() => {
+    req.session.user = { id: user.id, name: user.name, login: user.login, role: user.role };
+    res.json({ user: req.session.user });
+  });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -180,36 +232,58 @@ app.post('/api/logout', (req, res) => {
 });
 
 /* ============ UPLOAD API (PHOTOS & VOICE) ============ */
-app.post('/api/upload', requireAuth, (req, res) => {
+// Allowed MIME types whitelist
+const ALLOWED_MIMES = {
+  'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png',
+  'image/webp': '.webp', 'image/gif': '.gif',
+  'audio/webm': '.webm', 'audio/ogg': '.ogg', 'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/mp4': '.m4a',
+  'audio/aac': '.m4a', 'audio/x-m4a': '.m4a'
+};
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8 MB
+
+app.post('/api/upload', requireAuth, rateLimit(30, 60000), (req, res) => {
   const { data } = req.body || {};
   if (!data || typeof data !== 'string') return res.status(400).json({ error: 'Нет данных файла' });
 
   const commaIndex = data.indexOf(',');
-  if (!data.startsWith('data:') || commaIndex === -1) {
+  if (!data.startsWith('data:') || commaIndex === -1 || commaIndex > 200) {
     return res.status(400).json({ error: 'Неверный формат данных' });
   }
 
-  const header = data.slice(0, commaIndex); // e.g. "data:audio/webm;codecs=opus;base64"
+  const header = data.slice(0, commaIndex);
   const base64Data = data.slice(commaIndex + 1);
-  const mimeMatch = header.match(/^data:([^;]+)/);
-  const mime = mimeMatch ? mimeMatch[1].toLowerCase() : 'application/octet-stream';
+
+  // Validate base64 content (only allow valid base64 characters)
+  if (!/^[A-Za-z0-9+/=]+$/.test(base64Data.slice(0, 100))) {
+    return res.status(400).json({ error: 'Повреждённые данные файла' });
+  }
+
+  const mimeMatch = header.match(/^data:([a-z]+\/[a-z0-9.+-]+)/i);
+  const rawMime = mimeMatch ? mimeMatch[1].toLowerCase() : '';
+
+  // Strip codec suffixes like audio/webm;codecs=opus -> audio/webm
+  const mime = rawMime.split(';')[0];
+  const ext = ALLOWED_MIMES[mime];
+  if (!ext) {
+    return res.status(400).json({ error: 'Недопустимый тип файла. Разрешены изображения и аудио.' });
+  }
+
   const buffer = Buffer.from(base64Data, 'base64');
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    return res.status(400).json({ error: 'Файл слишком большой (макс. 8 МБ)' });
+  }
+  if (buffer.length < 100) {
+    return res.status(400).json({ error: 'Файл слишком маленький или повреждён' });
+  }
 
-  let ext = '.bin';
-  if (mime.includes('jpeg') || mime.includes('jpg')) ext = '.jpg';
-  else if (mime.includes('png')) ext = '.png';
-  else if (mime.includes('webp')) ext = '.webp';
-  else if (mime.includes('gif')) ext = '.gif';
-  else if (mime.includes('webm')) ext = '.webm';
-  else if (mime.includes('ogg')) ext = '.ogg';
-  else if (mime.includes('mp3') || mime.includes('mpeg')) ext = '.mp3';
-  else if (mime.includes('wav')) ext = '.wav';
-  else if (mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')) ext = '.m4a';
-  else if (mime.startsWith('image/')) ext = '.jpg';
-  else if (mime.startsWith('audio/')) ext = '.webm';
-
-  const safeName = `media_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+  const safeName = `media_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
   const targetPath = path.join(uploadsDir, safeName);
+
+  // Prevent path traversal
+  if (!targetPath.startsWith(uploadsDir)) {
+    return res.status(400).json({ error: 'Недопустимый путь файла' });
+  }
 
   fs.writeFileSync(targetPath, buffer);
   res.json({ url: `/uploads/${safeName}`, mime });
@@ -239,14 +313,25 @@ app.get('/api/messages', requireAuth, (req, res) => {
   res.json({ messages, buyer: { name: BUYER_NAME } });
 });
 
-app.post('/api/messages', requireAuth, (req, res) => {
+const ALLOWED_MSG_TYPES = ['text', 'image', 'voice'];
+
+app.post('/api/messages', requireAuth, rateLimit(40, 60000), (req, res) => {
   const { text = '', type = 'text', media_url = null, duration = null } = req.body || {};
-  if (type === 'text' && (!text || !text.trim())) {
+  const safeType = ALLOWED_MSG_TYPES.includes(type) ? type : 'text';
+  if (safeType === 'text' && (!text || !String(text).trim())) {
     return res.status(400).json({ error: 'Пустое сообщение' });
   }
-  const cleanText = (text || '').trim().slice(0, 1000);
+  // Validate media_url: must be a local /uploads/ path
+  let safeMediaUrl = null;
+  if (media_url && typeof media_url === 'string') {
+    if (/^\/uploads\/[a-zA-Z0-9_.-]+$/.test(media_url)) {
+      safeMediaUrl = media_url;
+    }
+  }
+  const cleanText = String(text || '').trim().slice(0, 1000);
+  const safeDuration = (duration && Number.isFinite(Number(duration))) ? Math.min(Math.round(Number(duration)), 600) : null;
   const info = db.prepare('INSERT INTO messages (user_id, sender, text, type, media_url, duration) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(req.session.user.id, 'user', cleanText, type, media_url, duration ? Math.round(duration) : null);
+    .run(req.session.user.id, 'user', cleanText, safeType, safeMediaUrl, safeDuration);
   const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(info.lastInsertRowid));
   res.json({ message });
 });
@@ -277,13 +362,20 @@ app.get('/api/admin/chats/:userId/messages', requireAdmin, (req, res) => {
 
 app.post('/api/admin/chats/:userId/messages', requireAdmin, (req, res) => {
   const userId = Number(req.params.userId);
+  if (!Number.isFinite(userId) || userId <= 0) return res.status(400).json({ error: 'Неверный ID пользователя' });
   const { text = '', type = 'text', media_url = null, duration = null } = req.body || {};
-  if (type === 'text' && (!text || !text.trim())) {
+  const safeType = ALLOWED_MSG_TYPES.includes(type) ? type : 'text';
+  if (safeType === 'text' && (!text || !String(text).trim())) {
     return res.status(400).json({ error: 'Пустое сообщение' });
   }
-  const cleanText = (text || '').trim().slice(0, 1000);
+  let safeMediaUrl = null;
+  if (media_url && typeof media_url === 'string' && /^\/uploads\/[a-zA-Z0-9_.-]+$/.test(media_url)) {
+    safeMediaUrl = media_url;
+  }
+  const cleanText = String(text || '').trim().slice(0, 1000);
+  const safeDuration = (duration && Number.isFinite(Number(duration))) ? Math.min(Math.round(Number(duration)), 600) : null;
   const info = db.prepare('INSERT INTO messages (user_id, sender, text, type, media_url, duration) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(userId, 'buyer', cleanText, type, media_url, duration ? Math.round(duration) : null);
+    .run(userId, 'buyer', cleanText, safeType, safeMediaUrl, safeDuration);
   const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(info.lastInsertRowid));
   res.json({ message });
 });
